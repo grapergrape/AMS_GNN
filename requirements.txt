@@ -1,0 +1,6 @@
+neo4j
+numpy
+trimesh
+networkx
+scipy
+python-dotenv
