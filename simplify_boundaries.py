@@ -3,15 +3,19 @@ from scipy.sparse.linalg import eigs
 import numpy as np
 from numpy.linalg import LinAlgError
 import trimesh
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import KDTree
 from scipy.spatial.transform import Rotation as R
 from sklearn.decomposition import PCA
 from xgboost import XGBRegressor
-
-from curvatures import *
-from old_downsample import *
 import os
 from os import path
+
+
+from curvatures import *
+#for testing
+from old_downsample import *
+
 
 def get_last_mesh_in_temp_dir(temp_dir):
     # sorts files based on modification time
@@ -243,32 +247,40 @@ class MeshSimplifier:
         return v1_error + v2_error
     
     def remove_duplicate_faces(self, faces):
-        # Define a sort function that sorts by regular and reversed order
-        def sort_func(face):
-            normal_order = np.sort(face)
-            reversed_order = np.sort(face[::-1])
-            return min(normal_order.tostring(), reversed_order.tostring())
+        # Sort each face's vertices by index
+        sorted_faces = np.sort(faces, axis=1)
 
-        # Apply the sort function to each face
-        sorted_faces = np.apply_along_axis(sort_func, axis=1, arr=faces)
+        # Sort the vertices of each face in ascending order, for both original and flipped cases
+        sorted_faces_direct = np.sort(faces, axis=1)
+        sorted_faces_flipped = np.sort(faces[:, ::-1], axis=1)
+
+        # Stack the original and flipped faces
+        all_faces = np.vstack((sorted_faces_direct, sorted_faces_flipped))
 
         # Get the unique faces
-        unique_faces, indices = np.unique(sorted_faces, return_index=True, axis=0)
+        unique_faces = np.unique(all_faces, axis=0)
 
-        return unique_faces
+        # Due to duplicates, the original and flipped faces might be both present 
+        # To remove them, we sort again and keep only unique, ensuring one copy (either original or flipped) is kept
+        sorted_unique_faces = np.sort(unique_faces, axis=0)
+        final_faces = np.unique(sorted_unique_faces, axis=0)
 
-    def simplify_mesh(self, mesh, path ,threshold=0.8):
+        return final_faces
+
+    def simplify_mesh(self, mesh, path, threshold=200):
         """Simplify the mesh while preserving the segmentation boundaries"""
         self.mesh = mesh
 
         self.shape_descriptor = self.compute_shape_descriptor(mesh)
         self.probability_matrix = self.compute_probability_matrix(self.shape_descriptor)
 
-        # A copy of the original vertices and faces
-        simplified_vertices = mesh.vertices.copy()
-        simplified_faces = mesh.faces.copy()
+        # Convert to list for easy manipulation
+        simplified_vertices = list(mesh.vertices)
+        simplified_faces = list(mesh.faces)
 
         quadrics = self.calculate_quadrics(mesh)
+
+        vertex_replacement_indices = {}  # Tracks which vertices are replaced
 
         # loop over the edges of the mesh
         for edge_index, (v1, v2) in enumerate(mesh.edges):
@@ -276,22 +288,30 @@ class MeshSimplifier:
             error_metric = self.compute_error_metric(v1, v2, quadrics)
             if error_metric < threshold:
                 new_vertex = (simplified_vertices[v1] + simplified_vertices[v2]) / 2
+                new_vertex_index = len(simplified_vertices)
 
-                # Find faces that use these vertices
-                face_indices = np.where((simplified_faces == v1) | (simplified_faces == v2))
-                for face_index in face_indices:
-                    face = simplified_faces[face_index]
-                    face[face == v1] = len(simplified_vertices)
-                    face[face == v2] = len(simplified_vertices)
+                # Keep track of the vertices replaced by the new one
+                vertex_replacement_indices[v1] = new_vertex_index
+                vertex_replacement_indices[v2] = new_vertex_index
 
-                simplified_vertices = np.vstack([simplified_vertices, new_vertex])
+                # Replace the vertices in the faces
+                for face in simplified_faces:
+                    face[face == v1] = new_vertex_index
+                    face[face == v2] = new_vertex_index
 
-        # Remove duplicate faces caused by the edge collapse
-        simplified_faces = self.remove_duplicate_faces(simplified_faces)
+                # Add the new vertex
+                simplified_vertices.append(new_vertex)
+
+        # Correct vertex references in faces
+        for face in simplified_faces:
+            for i in range(3):
+                if face[i] in vertex_replacement_indices:
+                    face[i] = vertex_replacement_indices[face[i]]
+
+        # Remove degenerate faces
+        simplified_faces = [face for face in simplified_faces if len(set(face)) == 3]
 
         return trimesh.Trimesh(vertices=simplified_vertices, faces=simplified_faces)
-        
-
 
 if __name__ == "__main__":
 
@@ -320,7 +340,6 @@ if __name__ == "__main__":
             # Load mesh
             mesh = trimesh.load_mesh(full_path)
             # Simplify mesh
-            mesh = downsample_with_knn(mesh, 5)
             print(f"Number of faces in the mesh: {len(mesh.faces)}")
             print(f"Number of vertices in the mesh: {len(mesh.vertices)}")
 
@@ -329,12 +348,13 @@ if __name__ == "__main__":
             # Create an instance of the MeshSimplifier and simplify the mesh
             simplifier = MeshSimplifier(temp_path)
             simplified_mesh = simplifier.simplify_mesh(mesh, full_path)
-            simplified_mesh.show()
+            simplified_mesh = downsample_with_knn(simplified_mesh, 1)
+
             # Save mesh to .obj file in temp directory
             new_path = path.join(temp_dir, f"{filename}_simp.obj")
             simplified_mesh.export(new_path)
             print(f"Simplified mesh exported to: {new_path}")
-            print(f"Number of faces in the mesh: {len(simplified_mesh.faces)}")
-            print(f"Number of vertices in the mesh: {len(simplified_mesh.vertices)}")
+            print(f"Number of faces in the mesh after: {len(simplified_mesh.faces)}")
+            print(f"Number of vertices in the mesh after: {len(simplified_mesh.vertices)}")
             # remove the file in temp directory at temp_path
             os.remove(temp_path)
