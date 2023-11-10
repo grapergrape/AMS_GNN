@@ -324,7 +324,7 @@ if __name__ == "__main__":
 
     # Get the last converted file
     last_mesh = get_last_mesh_in_temp_dir(temp_dir)
-
+    print(f"Last converted file: {last_mesh}")
     started_conversion = last_mesh is None
     total_files = len(files)
 
@@ -348,7 +348,7 @@ if __name__ == "__main__":
             # Create an instance of the MeshSimplifier and simplify the mesh
             simplifier = MeshSimplifier(temp_path)
             simplified_mesh = simplifier.simplify_mesh(mesh, full_path)
-            simplified_mesh = downsample_with_knn(simplified_mesh, 1)
+            #simplified_mesh = downsample_with_knn(simplified_mesh, 1)
 
             # Save mesh to .obj file in temp directory
             new_path = path.join(temp_dir, f"{filename}_simp.obj")

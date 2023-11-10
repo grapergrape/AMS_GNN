@@ -1,15 +1,18 @@
 import numpy as np
+import os
+import pickle
+from itertools import combinations
 import trimesh
 import networkx as nx
 import scipy.integrate as spi
 from distribution_probabilities import exponential_gamma
 from old_downsample import *
-from itertools import combinations
+
 
 class GraphConstructor:
     def __init__(self, mesh_path, threshold):
         self.mesh = trimesh.load_mesh(mesh_path)
-        self.mesh = downsample_with_knn(self.mesh, 2)
+        self.mesh = downsample_with_knn(self.mesh, 3)
         self.threshold = threshold
         self.edge_weights = None
         self.wasserstein_distance = None
@@ -227,7 +230,37 @@ class GraphConstructor:
         return hierarchical_structure
 
 if __name__ == "__main__":
-    mesh_path = 'Registration Cases/Case_01_CTA_PT00109_20101117.obj'
-    threshold = 0.5
-    graph_constructor = GraphConstructor(mesh_path, threshold)
-    hierarchical_structure = graph_constructor.construct_graph()
+        # Directory paths
+    mesh_dir = 'test_mesh'
+    graph_storage_dir = 'graph_storage'
+
+    # Check if the graph_storage_dir exists, if not create it
+    if not os.path.exists(graph_storage_dir):
+        os.makedirs(graph_storage_dir)
+
+    # Iterate over .obj files in the directory
+    for filename in os.listdir(mesh_dir):
+        if filename.endswith('.obj'):
+            # Get mesh path
+            mesh_path = os.path.join(mesh_dir, filename)
+            
+            # Log the current processing file
+            print(f"Processing file: {mesh_path}")
+
+            # Create a GraphConstructor object
+            graph_constructor = GraphConstructor(mesh_path, 0.5)
+
+            # Construct the graph
+            hierarchical_structure_graph = graph_constructor.construct_graph()
+            
+            # Get the base name without extension
+            basename = os.path.splitext(filename)[0]
+
+            # Get the graph storage path
+            graph_storage_path = os.path.join(graph_storage_dir, f"{basename}_graph.gpickle")
+
+        # Save the graph for later use
+            with open(graph_storage_path, 'wb') as f:
+                pickle.dump(hierarchical_structure_graph, f, pickle.HIGHEST_PROTOCOL)
+
+    print("All meshes have been processed and their corresponding graphs are stored.")
